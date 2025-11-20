@@ -1,0 +1,49 @@
+# ==========================
+# Java + Eclipse + Gradle
+# ==========================
+
+# === Java build output ===
+*.class
+
+# === Package files ===
+*.jar
+*.war
+*.ear
+
+# === Gradle ===
+.gradle/
+build/
+!gradle-wrapper.jar
+!**/src/**/gradle-wrapper.jar
+
+# Gradle caches
+**/build/
+**/.gradle/
+
+# Local Gradle properties (optional, often contains sensitive data)
+gradle.properties
+
+# === Eclipse ===
+.project
+.classpath
+.settings/
+.loadpath
+
+# Eclipse working files
+.metadata/
+bin/
+
+# === OS-generated files ===
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# === Logs and reports ===
+*.log
+*.tmp
+*.swp
+
+# === Misc ===
+*.bak
+*.orig

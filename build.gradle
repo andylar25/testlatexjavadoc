@@ -1,0 +1,222 @@
+/*
+ * =============================================================================
+ * PROJECT BUILD CONFIGURATION – Gradle 8.x
+ * =============================================================================
+ *
+ * PURPOSE
+ * -------
+ * This build supports **4 distinct development & distribution workflows**:
+ *
+ * 1. Fast feedback      → ./gradlew test
+ * 2. Local documentation → ./gradlew javadoc
+ * 3. Test build         → ./gradlew build
+ * 4. Full release       → ./gradlew dist
+ *
+ * COMMANDS
+ * --------
+ * ┌─────────────────────┬────────────────────────────────────────────────────┐
+ * │ Command             │ Execution Path                                     │
+ * ├─────────────────────┼────────────────────────────────────────────────────┤
+ * │ ./gradlew test      │ compile → test                                     │
+ * │ ./gradlew javadoc   │ compile → test → javadoc                           │
+ * │ ./gradlew build     │ compile → test → jar → javadoc     │
+ * │ ./gradlew dist      │ compile → test → jar → javadoc → copyJarToLibs     │
+ * │ ./gradlew build -PcopyToLibs │ Same as `dist` (alternative)               │
+ * └─────────────────────┴────────────────────────────────────────────────────┘
+ *
+ * JAR MANIFEST
+ * ------------
+ * Every built JAR includes:
+ * Version:       <from version.txt>
+ * Java-Version:  <compilation target, e.g., 11>
+ *
+ * LOCAL LIBS FOLDER
+ * -----------------
+ * JAR is copied to a configurable directory:
+ * Default: ./libs (project root)
+ * Custom:  Set in gradle.properties → libs.dir=/path/to/libs
+ * Or via CLI → -Plibs.dir=E:/workspace/libs
+ *
+ * CLEANUP
+ * -------
+ * `./gradlew clean` removes:
+ * • build/ directory
+ * • copied JAR from local libs folder (versioned name)
+ *
+ * CUSTOMIZATION
+ * -------------
+ * • Change Java version → edit `java.toolchain.languageVersion`
+ * • Add Maven publish  → add `maven-publish` plugin
+ * • Use relative paths → prefer `libs.dir` property
+ *
+ * =============================================================================
+ */
+
+plugins { id 'java-library' }
+
+version = rootProject.file('version.txt').text.trim()
+
+// --------------------------------------------------------------------------
+// JAVA TOOLCHAIN – Define compilation source/target version
+// --------------------------------------------------------------------------
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)  // Change to 17, 21, etc.
+    }
+}
+
+// --------------------------------------------------------------------------
+// LOCAL LIBS DIRECTORY – Where JAR is copied during `dist`
+// Default: ./libs (project root)
+// Override: -Plibs.dir=/custom/path or gradle.properties
+// --------------------------------------------------------------------------
+def localLibsDir = providers.gradleProperty('libs.dir')
+        .getOrElse(file('libs').absolutePath)
+
+// --------------------------------------------------------------------------
+// REPOSITORIES
+// --------------------------------------------------------------------------
+repositories {
+    mavenCentral()
+}
+
+// --------------------------------------------------------------------------
+// DEPENDENCIES
+// --------------------------------------------------------------------------
+dependencies {
+	// INSERT HERE THE EXTERNAL .JARS - CHECK WITH ./gradlew dependencies
+	// if more than 1:
+	//    implementation files(
+    //    "${localLibsDir}/ext.jar",
+    //    "${localLibsDir}/helper.jar")
+	implementation files(
+		"${localLibsDir}/commonlib-5.0.jar"
+		)
+	
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.hamcrest:hamcrest:2.2'    
+}
+
+// --------------------------------------------------------------------------
+// COMPILE & TEST SETTINGS
+// --------------------------------------------------------------------------
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+tasks.named('test', Test) {
+    systemProperty 'file.encoding', 'utf-8'
+}
+
+// --------------------------------------------------------------------------
+// JAR MANIFEST – Include version + Java compilation target
+// --------------------------------------------------------------------------
+tasks.named('jar', Jar) {
+    manifest {
+        attributes(
+            'Version'       : project.version,
+            'Java-Version'  : java.toolchain.languageVersion.get().asInt(),
+            'Class-Path'    : configurations.runtimeClasspath
+                                .filter { it.name.endsWith('.jar') }
+                                .collect { it.name }
+                                .join(' ')
+        )
+    }
+}
+
+// --------------------------------------------------------------------------
+// JAVADOC – Generate API docs + copy extra docs from src/main/docs
+// --------------------------------------------------------------------------
+tasks.named('javadoc', Javadoc) {
+    options.encoding = options.docEncoding = options.charSet = 'UTF-8'
+    
+    // ----------------------------------------------------------------------
+    // INTEGRATE MATHJAX FOR LATEX SUPPORT
+    // ----------------------------------------------------------------------
+    // FIX: Allow JavaScript in Javadoc (Required for JDK 18+)
+    // Gradle automatically prepends one dash (-). We explicitly add a 
+    // second dash to the name to generate: --allow-script-in-comments
+    // ----------------------------------------------------------------------
+    if (java.toolchain.languageVersion.get().asInt() >= 18) {
+        options.addBooleanOption("-allow-script-in-comments", true)
+    }
+
+    // ----------------------------------------------------------------------
+    // INJECT MATHJAX HEADER
+    // ----------------------------------------------------------------------
+    File mathJaxHeader = file('mathjax-header.html')
+    if (mathJaxHeader.exists()) {
+        options.header = mathJaxHeader.getText('UTF-8')
+    } else {
+        println "WARNING: 'mathjax-header.html' not found. LaTeX math will not render."
+    }
+
+    doLast {
+        copy {
+            from 'src/main/docs'
+            into destinationDir
+        }
+    }
+}
+
+// --------------------------------------------------------------------------
+// copyJarToLibs – Copy final JAR to local libs folder
+// Only runs if: tests pass AND jar exists
+// --------------------------------------------------------------------------
+task copyJarToLibs(type: Copy) {
+    group = 'Distribution'
+    description = "Copies built JAR to ${localLibsDir} (only if tests pass)"
+
+    dependsOn test, jar, javadoc
+    from jar
+    into localLibsDir
+
+    doLast {
+        def javaVer = java.toolchain.languageVersion.get()
+        println "JAR copied → ${localLibsDir}/${jar.archiveFileName.get()}"
+        println "   Version: ${project.version} | Java: ${javaVer}"
+    }
+}
+
+// --------------------------------------------------------------------------
+// 1. DEV: Fast compile + test
+// → ./gradlew test
+// --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// 2. DEV: Generate Javadoc (requires passing tests)
+// → ./gradlew javadoc
+// --------------------------------------------------------------------------
+javadoc {
+    dependsOn test
+}
+
+// --------------------------------------------------------------------------
+// 3. DIST: Full distribution build
+// → ./gradlew dist
+// --------------------------------------------------------------------------
+task dist {
+    group = 'Distribution'
+    description = 'Full build: test → jar → javadoc → copyJarToLibs'
+    dependsOn copyJarToLibs
+}
+
+// --------------------------------------------------------------------------
+// OPTIONAL: Use standard `build` task with -PcopyToLibs flag
+// → ./gradlew build -PcopyToLibs
+// --------------------------------------------------------------------------
+if (project.hasProperty('copyToLibs')) {
+    build {
+        dependsOn dist
+    }
+}
+
+// --------------------------------------------------------------------------
+// CLEAN: Remove build artifacts + copied JAR from local libs
+// --------------------------------------------------------------------------
+clean {
+    doLast {
+        def jarName = "${project.name}-${project.version}.jar"
+        delete fileTree(dir: localLibsDir) { include jarName }
+        println "Cleaned: ${localLibsDir}/${jarName}"
+    }
+}
